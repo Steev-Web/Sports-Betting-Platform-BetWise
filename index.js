@@ -4,6 +4,7 @@ const dotenv = require("dotenv");
 const bcrypt = require("bcrypt");
 const User = require("./userModel");
 const Game = require("./gameModel");
+const Bet = require("./betModel");
 const Counter = require("./counter");
 dotenv.config();
 
@@ -170,7 +171,7 @@ app.post("/add-games", async (req, res) => {
       odds,
     });
 
-    //  await newGame.save();
+    await newGame.save();
 
     res.status(201).json({
       message: `Match added Successfully! ${homeTeam} vs ${awayTeam}`,
@@ -181,3 +182,64 @@ app.post("/add-games", async (req, res) => {
     res.status(500).json({ message: "Internal server error" });
   }
 });
+
+
+app.get("/all-game", async (req, res) => { 
+  try {
+    const games = await Game.find();
+    res.status(200).json({ message: "Games retrieved successfully", games });
+  } catch (error) {
+    res.status(400).json({ message: "Error retrieving games", error });
+  }
+});
+
+
+
+
+// ------------------------- milestone 2  - Deduct stake from wallet and record bet.  -------------------------
+
+
+app.post("/place-bet", async (req, res) => {
+  try {
+    const { userId, gameId, selectedOutcome, stake } = req.body;
+
+    const user = await User.findById(userId);
+    const game = await Game.findById(gameId);
+
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    if (!game) return res.status(404).json({ message: 'Game not found' });
+
+    const odds = game.odds[selectedOutcome];
+    if (!odds) return res.status(400).json({ message: 'Invalid selected outcome' });
+
+    if (user.walletBalance < stake) {
+      return res.status(400).json({ message: 'Insufficient wallet balance' });
+    }
+
+    user.walletBalance -= stake;
+    await user.save();
+
+    const potentialWin = stake * odds;
+
+    const newBet = new Bet({
+      user: user._id,
+      game: game._id,
+      selectedOutcome,
+      stake,
+      potentialWin
+    });
+
+    await newBet.save();
+
+    res.status(201).json({
+      message: 'Bet placed successfully',
+      bet: newBet
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Error placing bet', error });
+  }
+});
+
+
