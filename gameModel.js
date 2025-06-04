@@ -15,9 +15,22 @@ const gameSchema = new mongoose.Schema(
       NG: { type: Number, required: true },
       correctScore: { type: Number, required: true },
     },
+    status: {
+      type: String,
+      enum: ["upcoming", "ongoing", "finished"],
+      default: "upcoming",
+    },
+    result: {
+      type: String,
+      enum: ["home", "draw", "away", null],
+      default: null,
+    },
   },
   { timestamps: true }
 );
 
 const Game = mongoose.model("Game", gameSchema);
 module.exports = Game;
+
+
+

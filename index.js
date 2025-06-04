@@ -194,6 +194,21 @@ app.get("/all-game", async (req, res) => {
 });
 
 
+// api for one game at a time by gameID
+app.get("/game/:id", async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const game = await Game.findById(id);   
+    if (!game) {
+      return res.status(404).json({ message: "Game not found" });
+    }
+    res.status(200).json({ message: "Game retrieved successfully", game }); 
+  } catch (error) {
+    res.status(400).json({ message: "Error retrieving game", error });
+  }
+}); 
+
 
 
 // ------------------------- milestone 2  - Deduct stake from wallet and record bet.  -------------------------
@@ -243,3 +258,185 @@ app.post("/place-bet", async (req, res) => {
 });
 
 
+
+// ------------------------- Milestone 3  - Admin can update game result.  -------------------------
+// app.put("/update-game/:id", async (req, res) => {
+//   const { id } = req.params;
+//   const { status, result } = req.body;
+
+//   try {
+//     const game = await Game.findById(id);
+//     if (!game) {
+//       return res.status(404).json({ message: "Game not found" });
+//     } 
+
+//     // Validate status and result
+//     const validStatuses = ["upcoming", "ongoing", "finished"];  
+//     if (!validStatuses.includes(status)) {
+//       return res.status(400).json({ message: "Invalid game status" });
+//     }
+//     const validResults = ["home", "draw", "away", null];
+//     if (result && !validResults.includes(result)) {
+//       return res.status(400).json({ message: "Invalid game result" });
+//     }
+//     game.status = status;
+//     game.result = result || null; // Allow result to be null if not provided
+//     await game.save();
+//     res.status(200).json({ message: "Game updated successfully", game });
+//   } catch (error) {
+//     console.error("Error updating game:", error);
+//     res.status(500).json({ message: "Internal server error", error });
+//   }
+// }
+// );  
+
+
+app.post('/admin/set-result', async (req, res) => {
+  try {
+    const { gameId, result } = req.body;
+
+    const game = await Game.findById(gameId);
+    if (!game) return res.status(404).json({ message: 'Game not found' });
+
+    if (!['home', 'draw', 'away'].includes(result)) {
+      return res.status(400).json({ message: 'Invalid result value' });
+    }
+
+    game.result = result;
+    await game.save();
+
+    res.status(200).json({ message: 'Result set successfully', game });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error });
+  }
+});
+
+// api to update game status
+app.put("/update-game-status/:id", async (req, res) => {  
+  const { id } = req.params;
+  const { status } = req.body;
+
+  try {
+    const game = await Game.findById(id);
+    if (!game) {
+      return res.status(404).json({ message: "Game not found" });
+    }
+
+    // Validate status
+    const validStatuses = ["upcoming", "ongoing", "finished"];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ message: "Invalid game status" });
+    }
+
+    game.status = status;
+    await game.save();
+    res.status(200).json({ message: "Game status updated successfully", game });
+  } catch (error) {
+    console.error("Error updating game status:", error);
+    res.status(500).json({ message: "Internal server error", error });
+  }
+}
+);
+
+
+
+// ------------------------- Milestone 3 - Admin can view all bets and their status.  -------------------------
+app.get("/bets", async (req, res) => {
+  try {
+    const bets = await Bet.find().populate("user game");
+    res.status(200).json({ message: "Bets retrieved successfully", bets });
+  } catch (error) {
+    res.status(400).json({ message: "Error retrieving bets", error });
+  }
+}); 
+
+
+// ------------------------- Milestone 3 - Calculate payouts and update wallets.  -------------------------
+
+//api for Calculate payouts and update wallets.
+app.post("/calculate-payouts", async (req, res) => {
+  try {
+    const { gameId } = req.body;
+
+    const game = await Game.findById(gameId);
+    if (!game) {
+      return res.status(404).json({ message: "Game not found" });
+    }
+    if (game.status !== "finished") {
+      return res.status(400).json({ message: "Game Ongoing: Game must be finished to calculate payouts" });
+    }
+    const bets = await Bet.find({ game: gameId, status: "upcoming" }).populate("user");
+    if (bets.length === 0) {
+      return res.status(200).json({ message: "No bets to process for this game" });
+    }
+    const payouts = [];
+    for (const bet of bets) {
+      let payout = 0;
+      if (bet.selectedOutcome === game.result) {
+        payout = bet.potentialWin;
+        bet.status = "won";
+      } else {
+        bet.status = "lost";
+      }
+      bet.save();
+      bet.user.walletBalance += payout;
+      await bet.user.save();
+      payouts.push({ user: bet.user.email, payout });
+    }
+    res.status(200).json({
+      message: "Payouts calculated successfully",
+      payouts,
+    });
+  } catch (error) {
+    console.error("Error calculating payouts:", error);
+    res.status(500).json({ message: "Internal server error", error });
+  } 
+}
+);
+
+// api to settle bets after a game result is set
+// This endpoint is used to settle bets after a game result is set.
+
+app.post('/settle-bets', async (req, res) => {
+  try {
+    const { gameId } = req.body;
+
+    const game = await Game.findById(gameId);
+    if (!game || !game.result) {
+      return res.status(404).json({ message: 'Game result not set or game not found' });
+    }
+
+    const bets = await Bet.find({ game: gameId, status: 'pending' }).populate('user');
+
+    for (const bet of bets) {
+      if (bet.selectedOutcome === game.result) {
+        // User won
+        bet.status = 'won';
+        bet.user.walletBalance += bet.potentialWin;
+
+        await bet.user.save();
+      } else {
+        // User lost
+        bet.status = 'lost';
+      }
+      await bet.save();
+    }
+
+    res.status(200).json({ message: 'Bets settled', gameId });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error });
+  }
+});
+
+
+// GET endpoints for viewing bet history and results.
+app.get('/user/:id/bets', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const bets = await Bet.find({ user: id }).populate('game');
+    res.status(200).json({ message: 'Bets retrieved successfully', bets });
+  } catch (error) {
+    res.status(400).json({ message: 'Error retrieving bets', error });
+  }
+});
